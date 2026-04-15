@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#SBATCH --job-name=meegflow
+#SBATCH --ntasks-per-node=10
+#SBATCH --mem=10G
+#SBATCH --time=00:15:00
+
+# Copyright (c) 2026 brainlife.io 
+# 
+# This is the main file run by the brainlife.io orchestration system
+#
+# Author: Maximilien Chaumon
+
+# run the actual python code
+singularity exec docker://aunnikri642/app-freesurfer-mne-source-recon python3 main.py
+
