@@ -12,5 +12,11 @@
 # Author: Maximilien Chaumon
 
 # run the actual python code
-singularity exec docker://aunnikri642/app-freesurfer-mne-source-recon python3 main.py
+singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
 
+
+docker run --rm -v /path/to/bids/data:/data meegflow \
+    --bids-root /data \
+    --subjects 01 02 \
+    --tasks rest \
+    --config /app/configs/config_example.yamlk
