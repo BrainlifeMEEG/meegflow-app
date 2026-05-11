@@ -35,11 +35,9 @@ singularity exec \
     -B "$RAW_DIR":/data \
     -B "$CONFIG_YAML":/config.yaml \
     docker://ghcr.io/brainlifemeeg/meegflow:latest \
-    ls -l /data && \
-    ls -l config.yaml
-    # meegflow \
-    # --reader "glob" \
-    # --glob "/*.fif" \
-    # --data-root /data \
-    # --config config.yaml
+    meegflow \
+    --reader "glob" \
+    --glob "/*.fif" \
+    --data-root /data \
+    --config config.yaml
  
