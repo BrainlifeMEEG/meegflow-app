@@ -38,7 +38,7 @@ singularity exec \
     docker://ghcr.io/brainlifemeeg/meegflow:latest \
     meegflow \
     --reader "glob" \
-    --glob "/*.fif" \
+    --glob "*.fif" \
     --data-root /data \
     --config config.yaml
  
