@@ -11,16 +11,30 @@
 #
 # Author: Maximilien Chaumon
 
-# run the actual python code
-# singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
-singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# docker run --rm -v /path/to/bids/data:/data meegflow \
-#     --bids-root /data \
-#     --subjects 01 02 \
-#     --tasks rest \
-#     --config /app/configs/config_example.yamlk
+# Read config.json
+RAW_PATH=$(jq -r '.raw' "$SCRIPT_DIR/config.json")
+YAML_CONTENT=$(jq -r '.yaml' "$SCRIPT_DIR/config.json")
 
-# singularity exec docker://aunnikri642/app-freesurfer-mne-source-recon python3 main.py
+# Get absolute path and directory of raw data file
+RAW_ABS_PATH=$(cd "$(dirname "$RAW_PATH")" && pwd)/$(basename "$RAW_PATH")
+RAW_DIR=$(dirname "$RAW_ABS_PATH")
 
+# Write YAML content to temporary config file
+CONFIG_YAML="$SCRIPT_DIR/config.yaml"
+echo "$YAML_CONTENT" > "$CONFIG_YAML"
 
+echo "Raw data path: $RAW_ABS_PATH"
+echo "Raw data directory: $RAW_DIR"
+echo "Config YAML path: $CONFIG_YAML"
+
+# Run singularity with dynamic bindings
+singularity exec \
+    -B "$RAW_DIR":/data \
+    -B "$CONFIG_YAML":/config.yaml \
+    docker://ghcr.io/brainlifemeeg/meegflow:latest \
+    --data-root /data \
+    --config /config.yaml
+ 
