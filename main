@@ -36,6 +36,7 @@ singularity exec \
     -B "$CONFIG_YAML":/config.yaml \
     docker://ghcr.io/brainlifemeeg/meegflow:latest \
     meegflow \
+    --reader "glob" \
     --data-root /data \
     --config /config.yaml
  
