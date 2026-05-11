@@ -1,6 +1,6 @@
 [submodule "meegflow"]
 	path = meegflow
-	url = git@github.com:BrainlifeMEEG/meegflow.git
+	url = https://github.com/BrainlifeMEEG/meegflow
 [submodule "brainlife_utils"]
 	path = brainlife_utils
-	url = git@github.com:BrainlifeMEEG/brainlifeMEEG_utils.git
+	url = https://github.com/BrainlifeMEEG/brainlifeMEEG_utils
