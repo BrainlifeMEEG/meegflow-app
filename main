@@ -13,7 +13,7 @@
 
 # run the actual python code
 # singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
-singularity exec --no-privs docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
+singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
 
 # docker run --rm -v /path/to/bids/data:/data meegflow \
 #     --bids-root /data \
