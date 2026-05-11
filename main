@@ -29,6 +29,7 @@ echo "$YAML_CONTENT" > "$CONFIG_YAML"
 echo "Raw data path: $RAW_ABS_PATH"
 echo "Raw data directory: $RAW_DIR"
 echo "Config YAML path: $CONFIG_YAML"
+echo "Starting container execution..."
 
 # Run singularity with dynamic bindings
 singularity exec \
