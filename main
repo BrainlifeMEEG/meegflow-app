@@ -42,7 +42,7 @@ singularity exec \
     --reader "glob" \
     --glob "*.fif" \
     --extension ".fif" \
-    --io_backend "read_raw_fif" \
+    --io-backend "read_raw_fif" \
     --data-root /data \
     --output-root out_dir/ \
     --config config.yaml
