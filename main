@@ -41,6 +41,7 @@ singularity exec \
     meegflow \
     --reader "glob" \
     --glob "*.fif" \
+    --extension ".fif" \
     --data-root /data \
     --output-root out_dir/ \
     --config config.yaml
