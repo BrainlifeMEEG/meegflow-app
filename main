@@ -40,7 +40,7 @@ singularity exec \
     docker://ghcr.io/brainlifemeeg/meegflow:latest \
     meegflow \
     --reader "glob" \
-    --glob "*.fif" \
+    --glob "raw.fif" \
     --extension ".fif" \
     --io-backend "read_raw_fif" \
     --data-root /data \
