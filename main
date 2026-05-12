@@ -11,6 +11,8 @@
 #
 # Author: Maximilien Chaumon
 
+mkdir -p out_dir
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -40,5 +42,6 @@ singularity exec \
     --reader "glob" \
     --glob "*.fif" \
     --data-root /data \
+    --output-root out_dir/ \
     --config config.yaml
  
