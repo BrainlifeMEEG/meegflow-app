@@ -1,17 +1,4 @@
 {
     "raw": "/network/iss/cenir/analyse/meeg/BRAINLIFE/datasets/raw2.fif",
-    "yaml":"
-pipeline:
-  - name: bandpass_filter
-    l_freq: 1.0
-    h_freq: 30.0
-  - name: reference
-    ref_channels: average
-  - name: ica
-    n_components: 15
-    method: fastica
-    find_eog: true
-    apply: true
-  - name: generate_json_report
-"
+    "yaml":"pipeline:\n  - name: bandpass_filter\n    l_freq: 1.0\n    h_freq: 30.0\n  - name: reference\n    ref_channels: average\n  - name: ica\n    n_components: 15\n    method: fastica\n    find_eog: true\n    apply: true\n  - name: generate_json_report"
 }
