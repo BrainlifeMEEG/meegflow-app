@@ -69,7 +69,7 @@ with open(config_yaml_path, 'r') as f:
 data_root = "/home/maximilien.chaumon/liensNet/analyse/BRAINLIFE/datasets/"
 reader = GlobReader(
     data_root=data_root,
-    pattern="*.fif"
+    pattern="raw.fif"
 )
 
 # Initialize pipeline
@@ -81,7 +81,7 @@ pipeline = MEEGFlowPipeline(
 
 # Run preprocessing
 try:
-    results = pipeline.run_pipeline(extension=".fif")
+    results = pipeline.run_pipeline(extension=".fif", io_backend="read_raw_fif")
     
     # Print results
     print("\nPipeline execution completed!")
