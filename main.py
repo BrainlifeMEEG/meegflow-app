@@ -66,7 +66,7 @@ with open(config_yaml_path, 'r') as f:
     config = yaml.safe_load(f)
 
 # Create a glob reader for .fif files
-data_root = "/home/maximilien.chaumon/liensNet/analyse/BRAINLIFE/datasets/"
+data_root = str(raw_dir)
 reader = GlobReader(
     data_root=data_root,
     pattern="raw.fif"
