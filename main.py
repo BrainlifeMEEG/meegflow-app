@@ -10,7 +10,6 @@ This app will run meegflow using the information in the config.json
 # - Maximilien Chaumon (https://github.com/dnacombo)
 
 import os
-import json
 import yaml
 import sys
 from pathlib import Path
@@ -18,13 +17,21 @@ from pathlib import Path
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# Create output directory
-os.makedirs("out_dir", exist_ok=True)
+sys.path.insert(0, os.path.join(SCRIPT_DIR, 'brainlife_utils'))
+from brainlife_utils import (
+    load_config,
+    ensure_output_dirs,
+    create_product_json,
+    add_info_to_product,
+    require_config_keys
+)
 
-# Read config.json
-config_json_path = SCRIPT_DIR / "config.json"
-with open(config_json_path, 'r') as f:
-    config_data = json.load(f)
+# Ensure output directory exists
+ensure_output_dirs('out_dir')
+
+# Load configuration
+config_data = load_config(str(SCRIPT_DIR / "config.json"))
+require_config_keys(config_data, ['raw'])
 
 # Extract raw path and yaml content
 raw_path = config_data.get('raw')
@@ -80,12 +87,18 @@ pipeline = MEEGFlowPipeline(
 )
 
 # Run preprocessing
+product_items = []
 try:
     results = pipeline.run_pipeline(extension=".fif", io_backend="read_raw_fif")
-    
+
     # Print results
     print("\nPipeline execution completed!")
     print(f"Results: {results}")
+    add_info_to_product(product_items, "MEEGFlow pipeline execution completed", 'success')
+    add_info_to_product(product_items, f"Results: {results}")
+    create_product_json(product_items)
 except Exception as e:
     print(f"Error running pipeline: {e}")
-    sys.exit(1) 
+    add_info_to_product(product_items, f"MEEGFlow pipeline failed: {e}", 'error')
+    create_product_json(product_items)
+    sys.exit(1)
