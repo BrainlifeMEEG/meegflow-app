@@ -5,43 +5,14 @@
 #SBATCH --mem=10G
 #SBATCH --time=00:15:00
 
-# Copyright (c) 2026 brainlife.io 
-# 
+# Copyright (c) 2026 brainlife.io
+#
 # This is the main file run by the brainlife.io orchestration system
 #
 # Author: Maximilien Chaumon
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+set -e
+set -x
 
-# Read config.json
-RAW_PATH=$(jq -r '.raw' "$SCRIPT_DIR/config.json")
-YAML_CONTENT=$(jq -r '.yaml' "$SCRIPT_DIR/config.json")
-
-# Get absolute path and directory of raw data file
-RAW_ABS_PATH=$(cd "$(dirname "$RAW_PATH")" && pwd)/$(basename "$RAW_PATH")
-RAW_DIR=$(dirname "$RAW_ABS_PATH")
-
-# Write YAML content to temporary config file
-CONFIG_YAML="$SCRIPT_DIR/config.yaml"
-echo "$YAML_CONTENT" > "$CONFIG_YAML"
-
-echo "Raw data path: $RAW_ABS_PATH"
-echo "Raw data directory: $RAW_DIR"
-echo "Config YAML path: $CONFIG_YAML"
-echo "Starting container execution..."
-
-# Run singularity with dynamic bindings
-singularity exec \
-    -B "$RAW_DIR":/data \
-    -B "$CONFIG_YAML":/config.yaml \
-    docker://ghcr.io/brainlifemeeg/meegflow:latest \
-    meegflow \
-    --reader "glob" \
-    --glob "raw.fif" \
-    --extension ".fif" \
-    --io-backend "read_raw_fif" \
-    --data-root /data \
-    --output-root out_dir/ \
-    --config config.yaml
- 
+# Run the actual python code
+singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 main.py
