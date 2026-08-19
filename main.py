@@ -13,6 +13,7 @@ import os
 import shutil
 import yaml
 import sys
+import mne
 from pathlib import Path
 
 # Get the directory where this script is located
@@ -89,6 +90,14 @@ pipeline = MEEGFlowPipeline(
 )
 
 # Run preprocessing
+#
+# meegflow's own step loop already logs "Executing step: <name>" via MNE's
+# logger, which flushes to stdout on every call -- pin the log level here so
+# that per-step status keeps reaching the web UI's live status line even if
+# it's ever lowered elsewhere (e.g. via the stderr noise-reduction guidance
+# in agent-instructions.md, which would otherwise silently suppress it).
+mne.set_log_level('INFO')
+
 product_items = []
 try:
     results = pipeline.run_pipeline(extension=".fif", io_backend="read_raw_fif")
