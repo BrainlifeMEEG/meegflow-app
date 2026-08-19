@@ -10,6 +10,7 @@ This app will run meegflow using the information in the config.json
 # - Maximilien Chaumon (https://github.com/dnacombo)
 
 import os
+import shutil
 import yaml
 import sys
 from pathlib import Path
@@ -25,9 +26,6 @@ from brainlife_utils import (
     add_info_to_product,
     require_config_keys
 )
-
-# Ensure output directory exists
-ensure_output_dirs('out_dir')
 
 # Load configuration
 config_data = load_config(str(SCRIPT_DIR / "config.json"))
@@ -79,10 +77,14 @@ reader = GlobReader(
     pattern="raw.fif"
 )
 
+# meegflow writes into its own BIDS-derivatives-style scratch tree under this
+# root; the flat, brainlife-conventional outputs are assembled from it below.
+scratch_root = Path("out_dir")
+
 # Initialize pipeline
 pipeline = MEEGFlowPipeline(
     reader=reader,
-    output_root="out_dir",
+    output_root=str(scratch_root),
     config=config
 )
 
@@ -91,9 +93,47 @@ product_items = []
 try:
     results = pipeline.run_pipeline(extension=".fif", io_backend="read_raw_fif")
 
-    # Print results
     print("\nPipeline execution completed!")
     print(f"Results: {results}")
+
+    # This app processes exactly one recording per task (the glob reader
+    # matches a single raw.fif), so a single result is expected. Results are
+    # grouped as {recording_key: [result_dict]}.
+    result = next(iter(results.values()))[0]
+
+    if 'error' in result:
+        raise RuntimeError(result['error'])
+
+    raw_file = result.get('raw_file')
+    epochs_file = result.get('epochs_file')
+    html_report = result.get('html_report')
+
+    if raw_file is None and epochs_file is None:
+        raise ValueError(
+            "Pipeline completed but produced neither a raw nor an epochs "
+            "output. Add a 'save_clean_instance' step to the pipeline YAML."
+        )
+
+    # Flatten meegflow's nested output into the brainlife-conventional flat
+    # filenames matching this app's registered outputs (out_raw/raw.fif,
+    # out_epo/meg-epo.fif, out_report/report.html). Only the outputs the
+    # configured pipeline actually produced are created.
+    if raw_file is not None:
+        ensure_output_dirs('out_raw')
+        shutil.move(raw_file, os.path.join('out_raw', 'raw.fif'))
+
+    if epochs_file is not None:
+        ensure_output_dirs('out_epo')
+        shutil.move(epochs_file, os.path.join('out_epo', 'meg-epo.fif'))
+
+    if html_report is not None:
+        ensure_output_dirs('out_report')
+        shutil.move(html_report, os.path.join('out_report', 'report.html'))
+
+    # meegflow's scratch tree has served its purpose; it isn't a declared
+    # output itself.
+    shutil.rmtree(scratch_root, ignore_errors=True)
+
     add_info_to_product(product_items, "MEEGFlow pipeline execution completed", 'success')
     add_info_to_product(product_items, f"Results: {results}")
     create_product_json(product_items)

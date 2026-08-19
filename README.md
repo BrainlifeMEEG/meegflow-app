@@ -10,7 +10,12 @@ This app runs a configurable [MEEGFlow](https://github.com/BrainlifeMEEG/meegflo
 
 ## Outputs
 
-- **out_dir/**: Outputs produced by the MEEGFlow pipeline, as determined by the configured pipeline steps
+Which of these are produced depends entirely on which steps the configured pipeline YAML runs;
+each is only written if the corresponding step is present.
+
+- **out_raw/raw.fif**: Preprocessed raw data, written when the pipeline runs `save_clean_instance` with `instance: raw`
+- **out_epo/meg-epo.fif**: Preprocessed epochs, written when the pipeline runs `save_clean_instance` with `instance: epochs`
+- **out_report/report.html**: Interactive MNE Report, written when the pipeline runs `generate_html_report`
 - **product.json**: Metadata describing pipeline execution status and results
 
 ## Configuration Parameters
