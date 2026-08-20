@@ -14,6 +14,7 @@ import shutil
 import yaml
 import sys
 import mne
+import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Get the directory where this script is located
@@ -22,11 +23,15 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, os.path.join(SCRIPT_DIR, 'brainlife_utils'))
 from brainlife_utils import (
     load_config,
+    setup_matplotlib_backend,
     ensure_output_dirs,
     create_product_json,
     add_info_to_product,
+    add_image_to_product,
     require_config_keys
 )
+
+setup_matplotlib_backend()
 
 # Load configuration
 config_data = load_config(str(SCRIPT_DIR / "config.json"))
@@ -144,7 +149,26 @@ try:
     shutil.rmtree(scratch_root, ignore_errors=True)
 
     add_info_to_product(product_items, "MEEGFlow pipeline execution completed", 'success')
-    add_info_to_product(product_items, f"Results: {results}")
+
+    # Quick-look preview plot from the final saved output: PSD for a raw
+    # output, averaged ERP butterfly for an epochs output.
+    ensure_output_dirs('out_figs')
+    if raw_file is not None:
+        raw = mne.io.read_raw_fif(os.path.join('out_raw', 'raw.fif'), preload=True, verbose=False)
+        fig = raw.compute_psd(verbose=False).plot(show=False)
+        psd_path = os.path.join('out_figs', 'psd.png')
+        fig.savefig(psd_path)
+        plt.close(fig)
+        add_image_to_product(product_items, 'Power spectral density', filepath=psd_path)
+
+    if epochs_file is not None:
+        epochs = mne.read_epochs(os.path.join('out_epo', 'meg-epo.fif'), preload=True, verbose=False)
+        fig = epochs.average().plot(spatial_colors=True, show=False)
+        erp_path = os.path.join('out_figs', 'erp.png')
+        fig.savefig(erp_path)
+        plt.close(fig)
+        add_image_to_product(product_items, 'Averaged ERP', filepath=erp_path)
+
     create_product_json(product_items)
 except Exception as e:
     print(f"Error running pipeline: {e}")
