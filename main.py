@@ -37,13 +37,25 @@ setup_matplotlib_backend()
 config_data = load_config(str(SCRIPT_DIR / "config.json"))
 require_config_keys(config_data, ['raw'])
 
-# Extract raw path and yaml content
-raw_path = config_data.get('raw')
+# Extract raw path(s) and yaml content. 'raw' is a single-file input by
+# default, but becomes a list of paths when the app's input is configured as
+# multi (e.g. to concatenate multiple runs) -- normalize to a list either way.
+raw_paths = config_data.get('raw')
+if isinstance(raw_paths, str):
+    raw_paths = [raw_paths]
 yaml_content = config_data.get('yaml')
 
-# Get absolute path and directory of raw data file
-raw_abs_path = (Path(raw_path).parent.resolve() / Path(raw_path).name) if raw_path else None
-raw_dir = raw_abs_path.parent if raw_abs_path else None
+# Stage every raw file into its own subdirectory under a common root, each
+# named identically ("raw.fif"), regardless of how brainlife happened to lay
+# out the (possibly differently-nested) input paths. This is what lets a
+# single wildcard glob pattern below group all of them into one recording.
+staging_root = Path("in_raw")
+if staging_root.exists():
+    shutil.rmtree(staging_root)
+for i, p in enumerate(raw_paths):
+    run_dir = staging_root / f"run{i}"
+    run_dir.mkdir(parents=True)
+    (run_dir / "raw.fif").symlink_to(Path(p).resolve())
 
 # Write YAML content to config.yaml file
 config_yaml_path = SCRIPT_DIR / "config.yaml"
@@ -51,8 +63,8 @@ if yaml_content:
     with open(config_yaml_path, 'w') as f:
         f.write(yaml_content)
 
-print(f"Raw data path: {raw_abs_path}")
-print(f"Raw data directory: {raw_dir}")
+print(f"Raw data path(s): {raw_paths}")
+print(f"Staged {len(raw_paths)} raw file(s) under: {staging_root.resolve()}")
 print(f"Config YAML path: {config_yaml_path}")
 print("Starting MEEGFlow pipeline execution...")
 
@@ -76,11 +88,18 @@ except ImportError as e:
 with open(config_yaml_path, 'r') as f:
     config = yaml.safe_load(f)
 
-# Create a glob reader for .fif files
-data_root = str(raw_dir)
+# custom_steps_folder is resolved by meegflow against the process's current
+# working directory at pipeline-run time, not against this YAML's location --
+# make it absolute here so it loads reliably regardless of invocation context.
+if config.get('custom_steps_folder'):
+    config['custom_steps_folder'] = str(SCRIPT_DIR / config['custom_steps_folder'])
+
+# Create a glob reader matching every staged raw.fif under staging_root. The
+# wildcard (no {variable}) makes the reader group all of them into a single
+# recording's data['all_raw'], ready for concatenate_recordings.
 reader = GlobReader(
-    data_root=data_root,
-    pattern="raw.fif"
+    data_root=str(staging_root),
+    pattern="*/raw.fif"
 )
 
 # meegflow writes into its own BIDS-derivatives-style scratch tree under this
@@ -122,6 +141,14 @@ try:
     epochs_file = result.get('epochs_file')
     html_report = result.get('html_report')
 
+    # meegflow's own run_pipeline() only copies a fixed set of keys (raw_file,
+    # epochs_file, json_report, html_report, n_epochs, preprocessing_steps)
+    # from the per-recording data dict into its returned results -- custom
+    # steps' own data['evoked_files'] never makes it through, so look for
+    # what they actually wrote on disk instead of trusting the results dict.
+    evoked_dir = scratch_root / 'evoked'
+    evoked_files = [str(p) for p in evoked_dir.glob('*.fif')] if evoked_dir.is_dir() else []
+
     if raw_file is None and epochs_file is None:
         raise ValueError(
             "Pipeline completed but produced neither a raw nor an epochs "
@@ -130,8 +157,8 @@ try:
 
     # Flatten meegflow's nested output into the brainlife-conventional flat
     # filenames matching this app's registered outputs (out_raw/raw.fif,
-    # out_epo/meg-epo.fif, out_report/report.html). Only the outputs the
-    # configured pipeline actually produced are created.
+    # out_epo/meg-epo.fif, out_report/report.html, out_evoked/*.fif). Only
+    # the outputs the configured pipeline actually produced are created.
     if raw_file is not None:
         ensure_output_dirs('out_raw')
         shutil.move(raw_file, os.path.join('out_raw', 'raw.fif'))
@@ -144,9 +171,15 @@ try:
         ensure_output_dirs('out_report')
         shutil.move(html_report, os.path.join('out_report', 'report.html'))
 
+    if evoked_files:
+        ensure_output_dirs('out_evoked')
+        for f in evoked_files:
+            shutil.move(f, os.path.join('out_evoked', os.path.basename(f)))
+
     # meegflow's scratch tree has served its purpose; it isn't a declared
     # output itself.
     shutil.rmtree(scratch_root, ignore_errors=True)
+    shutil.rmtree(staging_root, ignore_errors=True)
 
     add_info_to_product(product_items, "MEEGFlow pipeline execution completed", 'success')
 
