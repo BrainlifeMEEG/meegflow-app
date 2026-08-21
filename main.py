@@ -33,6 +33,11 @@ from brainlife_utils import (
 
 setup_matplotlib_backend()
 
+# Accumulates brainlife product.json entries across the whole script,
+# including warnings/errors raised before the main pipeline try/except below
+# (e.g. a run-order warning, a YAML parse error).
+product_items = []
+
 # Load configuration
 config_data = load_config(str(SCRIPT_DIR / "config.json"))
 require_config_keys(config_data, ['raw'])
@@ -45,20 +50,37 @@ if isinstance(raw_paths, str):
     raw_paths = [raw_paths]
 yaml_content = config_data.get('yaml')
 
-# When there's more than one raw file, sort by each file's own recording
-# start time (not the order brainlife happened to hand them to us -- a
-# multi-input's path order isn't guaranteed stable across runs/resubmissions
-# of "the same" inputs). concatenate_recordings just concatenates
-# data['all_raw'] in whatever order the reader found the files, so an
-# unstable input order would silently concatenate runs in a different
+# When there's more than one raw file, by default sort by each file's own
+# recording start time (not the order brainlife happened to hand them to us
+# -- a multi-input's path order isn't guaranteed stable across runs/
+# resubmissions of "the same" inputs). concatenate_recordings just
+# concatenates data['all_raw'] in whatever order the reader found the files,
+# so an unstable input order would silently concatenate runs in a different
 # sequence between runs -- different epoch numbering, different indices for
 # any hardcoded epoch-drop lists, a differently-ordered ICA input matrix --
-# even with a fixed ICA random_state.
-if len(raw_paths) > 1:
-    raw_paths = sorted(
-        raw_paths,
-        key=lambda p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date'],
-    )
+# even with a fixed ICA random_state. Set sort_runs_by_time: false in
+# config.json to use the given input order as-is instead (e.g. if you want
+# to force a specific order regardless of recording time).
+sort_runs_by_time = config_data.get('sort_runs_by_time', True)
+if len(raw_paths) > 1 and sort_runs_by_time:
+    original_order = list(raw_paths)
+    meas_dates = {
+        p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date']
+        for p in raw_paths
+    }
+    raw_paths = sorted(raw_paths, key=lambda p: meas_dates[p])
+    if raw_paths != original_order:
+        given = "\n".join(f"  {i + 1}. {p}  (recorded {meas_dates[p]})" for i, p in enumerate(original_order))
+        used = "\n".join(f"  {i + 1}. {p}  (recorded {meas_dates[p]})" for i, p in enumerate(raw_paths))
+        warning = (
+            f"Reordered {len(raw_paths)} input raw files by recording start time "
+            "before concatenation, because the order they were provided in didn't "
+            f"match chronological order.\nGiven order:\n{given}\nUsed order:\n{used}\n"
+            "Set 'sort_runs_by_time': false in config.json to use the given order "
+            "as-is instead."
+        )
+        print(f"WARNING: {warning}")
+        add_info_to_product(product_items, warning, 'warning')
 
 # Stage every raw file into its own subdirectory under a common root, each
 # named identically ("raw.fif"), regardless of how brainlife happened to lay
@@ -121,9 +143,8 @@ except yaml.YAMLError as e:
     else:
         detail = f"YAML syntax error in the pipeline config: {e}"
     print(detail)
-    error_product_items = []
-    add_info_to_product(error_product_items, detail, 'error')
-    create_product_json(error_product_items)
+    add_info_to_product(product_items, detail, 'error')
+    create_product_json(product_items)
     sys.exit(1)
 
 # custom_steps_folder is resolved by meegflow against the process's current
@@ -151,7 +172,6 @@ scratch_root = Path("out_dir")
 # in agent-instructions.md, which would otherwise silently suppress it).
 mne.set_log_level('INFO')
 
-product_items = []
 try:
     # Pipeline construction validates the config's step names against the
     # built-in + custom step registry and raises immediately on an unknown
