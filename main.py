@@ -10,6 +10,7 @@ This app will run meegflow using the information in the config.json
 # - Maximilien Chaumon (https://github.com/dnacombo)
 
 import os
+import re
 import shutil
 import yaml
 import sys
@@ -74,27 +75,69 @@ if len(raw_paths) > 1 and sort_runs_by_time:
     # path's basename if no tags are available (e.g. local dev runs).
     inputs_info = get_inputs_names(str(SCRIPT_DIR / "config.json"))
     labels = {}
+    tags_by_path = {}
     for i, p in enumerate(original_order):
         tags = inputs_info[i].get('tags', []) if i < len(inputs_info) else []
+        tags_by_path[p] = tags
         labels[p] = ", ".join(tags) if tags else os.path.basename(p)
+
+    def _natural_key(s):
+        # "Run2" sorts before "Run10": numeric chunks compare as numbers,
+        # not lexicographically (plain string sort would put "Run10" before
+        # "Run2").
+        return [int(chunk) if chunk.isdigit() else chunk.lower()
+                for chunk in re.split(r'(\d+)', s)]
 
     meas_dates = {
         p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date']
         for p in raw_paths
     }
-    raw_paths = sorted(raw_paths, key=lambda p: meas_dates[p])
-    if raw_paths != original_order:
-        given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
+
+    if all(d is not None for d in meas_dates.values()):
+        # The reliable case: recording start time is always present.
+        sort_key, sort_basis = (lambda p: meas_dates[p]), "recording start time"
+    elif all(tags_by_path[p] for p in raw_paths):
+        # Fallback when meas_date is missing on at least one file. Tags are
+        # arbitrary user-assigned labels -- nothing on brainlife guarantees
+        # they're unique per run or carry any sortable meaning at all, so
+        # this is a best-effort, deterministic-but-not-necessarily-correct
+        # fallback, not a real substitute for meas_date. Each file's own tag
+        # list is sorted before comparing, so tags that differ in list order
+        # rather than content still line up (e.g. ['Run1','Task1','egi2mne']
+        # and ['egi2mne','Task1','Run2'] both become
+        # ('Run1','Task1','egi2mne') / ('Run2','Task1','egi2mne')).
+        sort_key = lambda p: tuple(_natural_key(t) for t in sorted(tags_by_path[p]))
+        sort_basis = "dataset tags (no recording start time on every input)"
+    else:
+        sort_key, sort_basis = None, None
+
+    if sort_key is not None:
+        raw_paths = sorted(raw_paths, key=sort_key)
+
+    given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
+    if sort_key is None:
+        print(f"WARNING: could not determine a reliable run order (no recording start "
+              f"time or dataset tags on every input). Using given order: {given_str}.")
+        add_info_to_product(
+            product_items,
+            "Could not determine a reliable run order for concatenation: not every "
+            "input raw file has a recording start time, and not every input has "
+            "dataset tags either. Using the order the inputs were given in, which "
+            "is not guaranteed to be stable across runs.",
+            'warning',
+        )
+        add_info_to_product(product_items, f"Order used: {given_str}")
+    elif raw_paths != original_order:
         used_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(raw_paths))
-        print(f"WARNING: reordered raw runs by recording time. Given: {given_str}. Used: {used_str}.")
+        print(f"WARNING: reordered raw runs by {sort_basis}. Given: {given_str}. Used: {used_str}.")
         # Separate product_items entries rather than one message with
         # embedded newlines -- the product.json viewer renders each message
         # as a single line regardless of '\n' in the string.
         add_info_to_product(
             product_items,
-            f"Reordered {len(raw_paths)} input raw files by recording start time "
-            "before concatenation, because the order they were provided in didn't "
-            "match chronological order.",
+            f"Reordered {len(raw_paths)} input raw files by {sort_basis} before "
+            "concatenation, because the order they were provided in didn't match "
+            "that.",
             'warning',
         )
         add_info_to_product(product_items, f"Given order: {given_str}")
