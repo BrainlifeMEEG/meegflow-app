@@ -23,6 +23,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, os.path.join(SCRIPT_DIR, 'brainlife_utils'))
 from brainlife_utils import (
     load_config,
+    get_inputs_names,
     setup_matplotlib_backend,
     ensure_output_dirs,
     create_product_json,
@@ -64,23 +65,45 @@ yaml_content = config_data.get('yaml')
 sort_runs_by_time = config_data.get('sort_runs_by_time', True)
 if len(raw_paths) > 1 and sort_runs_by_time:
     original_order = list(raw_paths)
+
+    # Label each run by its brainlife dataset tags (e.g. "egi2mne, Task1,
+    # Run2") rather than its workdir path (an internal "../<task_id>/
+    # <dataset_id>/raw.fif" path that means nothing to the user viewing
+    # product.json). _inputs is stripped out of config_data by load_config()
+    # already, so re-read the raw config.json for it; falls back to the
+    # path's basename if no tags are available (e.g. local dev runs).
+    inputs_info = get_inputs_names(str(SCRIPT_DIR / "config.json"))
+    labels = {}
+    for i, p in enumerate(original_order):
+        tags = inputs_info[i].get('tags', []) if i < len(inputs_info) else []
+        labels[p] = ", ".join(tags) if tags else os.path.basename(p)
+
     meas_dates = {
         p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date']
         for p in raw_paths
     }
     raw_paths = sorted(raw_paths, key=lambda p: meas_dates[p])
     if raw_paths != original_order:
-        given = "\n".join(f"  {i + 1}. {p}  (recorded {meas_dates[p]})" for i, p in enumerate(original_order))
-        used = "\n".join(f"  {i + 1}. {p}  (recorded {meas_dates[p]})" for i, p in enumerate(raw_paths))
-        warning = (
+        given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
+        used_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(raw_paths))
+        print(f"WARNING: reordered raw runs by recording time. Given: {given_str}. Used: {used_str}.")
+        # Separate product_items entries rather than one message with
+        # embedded newlines -- the product.json viewer renders each message
+        # as a single line regardless of '\n' in the string.
+        add_info_to_product(
+            product_items,
             f"Reordered {len(raw_paths)} input raw files by recording start time "
             "before concatenation, because the order they were provided in didn't "
-            f"match chronological order.\nGiven order:\n{given}\nUsed order:\n{used}\n"
-            "Set 'sort_runs_by_time': false in config.json to use the given order "
-            "as-is instead."
+            "match chronological order.",
+            'warning',
         )
-        print(f"WARNING: {warning}")
-        add_info_to_product(product_items, warning, 'warning')
+        add_info_to_product(product_items, f"Given order: {given_str}")
+        add_info_to_product(product_items, f"Used order: {used_str}")
+        add_info_to_product(
+            product_items,
+            "Set 'sort_runs_by_time': false in config.json to use the given order "
+            "as-is instead.",
+        )
 
 # Stage every raw file into its own subdirectory under a common root, each
 # named identically ("raw.fif"), regardless of how brainlife happened to lay
