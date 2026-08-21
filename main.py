@@ -45,6 +45,21 @@ if isinstance(raw_paths, str):
     raw_paths = [raw_paths]
 yaml_content = config_data.get('yaml')
 
+# When there's more than one raw file, sort by each file's own recording
+# start time (not the order brainlife happened to hand them to us -- a
+# multi-input's path order isn't guaranteed stable across runs/resubmissions
+# of "the same" inputs). concatenate_recordings just concatenates
+# data['all_raw'] in whatever order the reader found the files, so an
+# unstable input order would silently concatenate runs in a different
+# sequence between runs -- different epoch numbering, different indices for
+# any hardcoded epoch-drop lists, a differently-ordered ICA input matrix --
+# even with a fixed ICA random_state.
+if len(raw_paths) > 1:
+    raw_paths = sorted(
+        raw_paths,
+        key=lambda p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date'],
+    )
+
 # Stage every raw file into its own subdirectory under a common root, each
 # named identically ("raw.fif"), regardless of how brainlife happened to lay
 # out the (possibly differently-nested) input paths. This is what lets a
@@ -85,8 +100,31 @@ except ImportError as e:
     sys.exit(1)
 
 # Load configuration
-with open(config_yaml_path, 'r') as f:
-    config = yaml.safe_load(f)
+try:
+    with open(config_yaml_path, 'r') as f:
+        config = yaml.safe_load(f)
+except yaml.YAMLError as e:
+    mark = getattr(e, 'problem_mark', None)
+    if mark is not None:
+        with open(config_yaml_path, 'r') as f:
+            lines = f.readlines()
+        offending_line = lines[mark.line].rstrip('\n') if mark.line < len(lines) else ''
+        pointer = ' ' * mark.column + '^'
+        detail = (
+            f"YAML syntax error in the pipeline config at line {mark.line + 1}, "
+            f"column {mark.column + 1}:\n{offending_line}\n{pointer}\n"
+            f"{getattr(e, 'problem', None) or str(e)}\n"
+            "Check indentation: every step under 'pipeline:' must start with the "
+            "same number of spaces before its '- name: ...' (mixing e.g. 1 and 2 "
+            "spaces between steps is a common cause)."
+        )
+    else:
+        detail = f"YAML syntax error in the pipeline config: {e}"
+    print(detail)
+    error_product_items = []
+    add_info_to_product(error_product_items, detail, 'error')
+    create_product_json(error_product_items)
+    sys.exit(1)
 
 # custom_steps_folder is resolved by meegflow against the process's current
 # working directory at pipeline-run time, not against this YAML's location --
@@ -106,15 +144,6 @@ reader = GlobReader(
 # root; the flat, brainlife-conventional outputs are assembled from it below.
 scratch_root = Path("out_dir")
 
-# Initialize pipeline
-pipeline = MEEGFlowPipeline(
-    reader=reader,
-    output_root=str(scratch_root),
-    config=config
-)
-
-# Run preprocessing
-#
 # meegflow's own step loop already logs "Executing step: <name>" via MNE's
 # logger, which flushes to stdout on every call -- pin the log level here so
 # that per-step status keeps reaching the web UI's live status line even if
@@ -124,6 +153,16 @@ mne.set_log_level('INFO')
 
 product_items = []
 try:
+    # Pipeline construction validates the config's step names against the
+    # built-in + custom step registry and raises immediately on an unknown
+    # one (e.g. a typo'd step name) -- keep it inside this try so that shows
+    # up as a clear product.json error instead of a raw traceback.
+    pipeline = MEEGFlowPipeline(
+        reader=reader,
+        output_root=str(scratch_root),
+        config=config
+    )
+
     results = pipeline.run_pipeline(extension=".fif", io_backend="read_raw_fif")
 
     print("\nPipeline execution completed!")
