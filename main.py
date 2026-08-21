@@ -52,19 +52,35 @@ if isinstance(raw_paths, str):
     raw_paths = [raw_paths]
 yaml_content = config_data.get('yaml')
 
-# When there's more than one raw file, by default sort by each file's own
-# recording start time (not the order brainlife happened to hand them to us
-# -- a multi-input's path order isn't guaranteed stable across runs/
-# resubmissions of "the same" inputs). concatenate_recordings just
-# concatenates data['all_raw'] in whatever order the reader found the files,
-# so an unstable input order would silently concatenate runs in a different
-# sequence between runs -- different epoch numbering, different indices for
-# any hardcoded epoch-drop lists, a differently-ordered ICA input matrix --
-# even with a fixed ICA random_state. Set sort_runs_by_time: false in
-# config.json to use the given input order as-is instead (e.g. if you want
-# to force a specific order regardless of recording time).
-sort_runs_by_time = config_data.get('sort_runs_by_time', True)
-if len(raw_paths) > 1 and sort_runs_by_time:
+# When there's more than one raw file, run_order controls what order they're
+# concatenated in -- brainlife doesn't guarantee a multi-input's path order
+# is stable across runs/resubmissions of "the same" inputs, and
+# concatenate_recordings just concatenates data['all_raw'] in whatever order
+# the reader found the files, so an unstable input order can silently
+# concatenate runs in a different sequence between runs: different epoch
+# numbering, different indices for any hardcoded epoch-drop lists, a
+# differently-ordered ICA input matrix -- even with a fixed ICA random_state.
+#
+# This is deliberately opt-in with no automatic fallback between criteria:
+# - 'as-is' (default): use the given order untouched.
+# - 'sort_by_meas_date': sort by each file's recording start time. Errors
+#   out if any input is missing one, rather than silently falling back to
+#   something else.
+# - 'sort_by_tags': sort by each file's brainlife dataset tags. Errors out
+#   if any input has no tags. Tags are arbitrary user-assigned labels --
+#   nothing on brainlife guarantees they're unique per run or sortable at
+#   all -- this is a best-effort ordering, not a guarantee the way
+#   meas_date is.
+run_order = config_data.get('run_order', 'as-is')
+valid_run_orders = ('as-is', 'sort_by_meas_date', 'sort_by_tags')
+if run_order not in valid_run_orders:
+    detail = f"Invalid run_order '{run_order}' in config.json. Must be one of: {', '.join(valid_run_orders)}."
+    print(f"ERROR: {detail}")
+    add_info_to_product(product_items, detail, 'error')
+    create_product_json(product_items)
+    sys.exit(1)
+
+if len(raw_paths) > 1 and run_order != 'as-is':
     original_order = list(raw_paths)
 
     # Label each run by its brainlife dataset tags (e.g. "egi2mne, Task1,
@@ -80,6 +96,7 @@ if len(raw_paths) > 1 and sort_runs_by_time:
         tags = inputs_info[i].get('tags', []) if i < len(inputs_info) else []
         tags_by_path[p] = tags
         labels[p] = ", ".join(tags) if tags else os.path.basename(p)
+    given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
 
     def _natural_key(s):
         # "Run2" sorts before "Run10": numeric chunks compare as numbers,
@@ -88,64 +105,62 @@ if len(raw_paths) > 1 and sort_runs_by_time:
         return [int(chunk) if chunk.isdigit() else chunk.lower()
                 for chunk in re.split(r'(\d+)', s)]
 
-    meas_dates = {
-        p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date']
-        for p in raw_paths
-    }
+    if run_order == 'sort_by_meas_date':
+        meas_dates = {
+            p: mne.io.read_raw_fif(p, preload=False, verbose=False).info['meas_date']
+            for p in raw_paths
+        }
+        missing = [labels[p] for p in raw_paths if meas_dates[p] is None]
+        if missing:
+            detail = (
+                "run_order is 'sort_by_meas_date' but "
+                f"{len(missing)} of {len(raw_paths)} input raw file(s) have no "
+                f"recording start time: {', '.join(missing)}. Given order: {given_str}. "
+                "Use 'as-is' or 'sort_by_tags' instead, or fix the source recording(s)."
+            )
+            print(f"ERROR: {detail}")
+            add_info_to_product(product_items, detail, 'error')
+            create_product_json(product_items)
+            sys.exit(1)
+        raw_paths = sorted(raw_paths, key=lambda p: meas_dates[p])
+        sort_basis = "recording start time"
+    else:  # sort_by_tags
+        missing = [labels[p] for p in raw_paths if not tags_by_path[p]]
+        if missing:
+            detail = (
+                "run_order is 'sort_by_tags' but "
+                f"{len(missing)} of {len(raw_paths)} input raw file(s) have no dataset "
+                f"tags: {', '.join(missing)}. Given order: {given_str}. Use 'as-is' or "
+                "'sort_by_meas_date' instead, or tag the source dataset(s)."
+            )
+            print(f"ERROR: {detail}")
+            add_info_to_product(product_items, detail, 'error')
+            create_product_json(product_items)
+            sys.exit(1)
+        # Each file's own tag list is sorted before comparing, so tags that
+        # differ in list order rather than content still line up (e.g.
+        # ['Run1','Task1','egi2mne'] and ['egi2mne','Task1','Run2'] both
+        # become ('Run1','Task1','egi2mne') / ('Run2','Task1','egi2mne')).
+        raw_paths = sorted(raw_paths, key=lambda p: tuple(_natural_key(t) for t in sorted(tags_by_path[p])))
+        sort_basis = "dataset tags"
 
-    if all(d is not None for d in meas_dates.values()):
-        # The reliable case: recording start time is always present.
-        sort_key, sort_basis = (lambda p: meas_dates[p]), "recording start time"
-    elif all(tags_by_path[p] for p in raw_paths):
-        # Fallback when meas_date is missing on at least one file. Tags are
-        # arbitrary user-assigned labels -- nothing on brainlife guarantees
-        # they're unique per run or carry any sortable meaning at all, so
-        # this is a best-effort, deterministic-but-not-necessarily-correct
-        # fallback, not a real substitute for meas_date. Each file's own tag
-        # list is sorted before comparing, so tags that differ in list order
-        # rather than content still line up (e.g. ['Run1','Task1','egi2mne']
-        # and ['egi2mne','Task1','Run2'] both become
-        # ('Run1','Task1','egi2mne') / ('Run2','Task1','egi2mne')).
-        sort_key = lambda p: tuple(_natural_key(t) for t in sorted(tags_by_path[p]))
-        sort_basis = "dataset tags (no recording start time on every input)"
-    else:
-        sort_key, sort_basis = None, None
-
-    if sort_key is not None:
-        raw_paths = sorted(raw_paths, key=sort_key)
-
-    given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
-    if sort_key is None:
-        print(f"WARNING: could not determine a reliable run order (no recording start "
-              f"time or dataset tags on every input). Using given order: {given_str}.")
-        add_info_to_product(
-            product_items,
-            "Could not determine a reliable run order for concatenation: not every "
-            "input raw file has a recording start time, and not every input has "
-            "dataset tags either. Using the order the inputs were given in, which "
-            "is not guaranteed to be stable across runs.",
-            'warning',
-        )
-        add_info_to_product(product_items, f"Order used: {given_str}")
-    elif raw_paths != original_order:
-        used_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(raw_paths))
-        print(f"WARNING: reordered raw runs by {sort_basis}. Given: {given_str}. Used: {used_str}.")
+    used_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(raw_paths))
+    if raw_paths != original_order:
+        print(f"Reordered raw runs by {sort_basis}. Given: {given_str}. Used: {used_str}.")
         # Separate product_items entries rather than one message with
         # embedded newlines -- the product.json viewer renders each message
         # as a single line regardless of '\n' in the string.
         add_info_to_product(
             product_items,
             f"Reordered {len(raw_paths)} input raw files by {sort_basis} before "
-            "concatenation, because the order they were provided in didn't match "
-            "that.",
-            'warning',
+            "concatenation, because the given order didn't already match.",
         )
         add_info_to_product(product_items, f"Given order: {given_str}")
         add_info_to_product(product_items, f"Used order: {used_str}")
+    else:
         add_info_to_product(
             product_items,
-            "Set 'sort_runs_by_time': false in config.json to use the given order "
-            "as-is instead.",
+            f"Input raw files were already in order by {sort_basis}: {used_str}",
         )
 
 # Stage every raw file into its own subdirectory under a common root, each
