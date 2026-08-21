@@ -22,4 +22,13 @@ set -x
 # message right before each step that's slow enough to otherwise leave a
 # stale status behind (and pins MNE's log level so meegflow's own per-step
 # logging keeps reaching stdout too).
-singularity exec docker://ghcr.io/brainlifemeeg/meegflow:latest python3 -u main.py
+#
+# meegflow's own code always comes from the vendored git submodule
+# (meegflow/), never from a Docker image -- main.py puts it first on
+# sys.path regardless of what the container has installed. So this only
+# needs a plain MNE runtime, not a dedicated meegflow image: use the same
+# brainlifemeeg/mne image every other app here uses, topped up with the two
+# small pure-Python packages meegflow needs that it doesn't already have
+# (rich, PyYAML -- mne/scipy/numpy/pandas are already baked in, so this is
+# fast). --user avoids needing write access to the image's own site-packages.
+singularity exec docker://brainlifemeeg/mne:1.12.1 bash -c "pip install --user --no-cache-dir --quiet rich pyyaml && python3 -u main.py"
