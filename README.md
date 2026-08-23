@@ -8,6 +8,8 @@ This app runs a configurable [MEEGFlow](https://github.com/BrainlifeMEEG/meegflo
 
 - **raw**: One or more MNE raw data files in `.fif` format (each named `raw.fif` in its own containing directory, since each is located via a glob pattern). When more than one is given, they're concatenated into a single recording before the pipeline runs — see `run_order` below for how their order is determined.
 
+  When the input dataset(s) carry brainlife's `subject`/`session`/`run` metadata, the app feeds it into meegflow itself (not just `product.json`): meegflow's report title and its BIDS-style output filenames use the real subject/session instead of defaulting to `None`, and the full identity (including run number(s)) is recorded in the report's preprocessing-steps list and in `product.json`. Concatenating raw files with conflicting `subject` metadata is treated as a likely input-selection mistake and fails the task before running anything; conflicting `session` metadata only produces a warning (the first session found is used).
+
 ## Outputs
 
 Which of these are produced depends entirely on which steps the configured pipeline YAML runs;
@@ -37,7 +39,7 @@ each is only written if the corresponding step is present.
 
 ## Usage
 
-The app reads `raw` and `yaml` from `config.json`, writes the `yaml` content to `config.yaml`, and passes it to MEEGFlow along with a glob reader pointing at the staged input file(s). MEEGFlow then executes each step of the pipeline in order and writes its results to `out_dir/`. Custom pipeline steps not built into MEEGFlow itself (e.g. this app's own `prepare_each_run`, `fir_filter`, `epoch_with_correctness`, ICA/evoked helpers) live under `custom_steps/` and are loaded automatically via `custom_steps_folder: custom_steps` in the pipeline YAML.
+The app reads `raw` and `yaml` from `config.json`, writes the `yaml` content to `config.yaml`, and passes it to MEEGFlow along with a glob reader pointing at the staged input file(s). MEEGFlow then executes each step of the pipeline in order and writes its results to `out_dir/`. Custom pipeline steps not built into MEEGFlow itself (e.g. this app's own `prepare_each_run`, `fir_filter`, `epoch_with_correctness`, ICA/evoked helpers, `set_recording_metadata`) live under `custom_steps/` and are always available — the app wires up `custom_steps_folder: custom_steps` itself, so the pipeline YAML doesn't need to declare it. `set_recording_metadata` is prepended to every pipeline automatically (it seeds meegflow's `data['subject']`/`data['session']` from brainlife's own dataset metadata, as described under `raw` above) and doesn't need to be listed in the YAML either.
 
 Example configuration:
 ```json

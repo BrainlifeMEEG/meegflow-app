@@ -80,22 +80,27 @@ if run_order not in valid_run_orders:
     create_product_json(product_items)
     sys.exit(1)
 
-if len(raw_paths) > 1 and run_order != 'as-is':
-    original_order = list(raw_paths)
+original_order = list(raw_paths)
 
-    # Label each run by its brainlife dataset tags (e.g. "egi2mne, Task1,
-    # Run2") rather than its workdir path (an internal "../<task_id>/
-    # <dataset_id>/raw.fif" path that means nothing to the user viewing
-    # product.json). _inputs is stripped out of config_data by load_config()
-    # already, so re-read the raw config.json for it; falls back to the
-    # path's basename if no tags are available (e.g. local dev runs).
-    inputs_info = get_inputs_names(str(SCRIPT_DIR / "config.json"))
-    labels = {}
-    tags_by_path = {}
-    for i, p in enumerate(original_order):
-        tags = inputs_info[i].get('tags', []) if i < len(inputs_info) else []
-        tags_by_path[p] = tags
-        labels[p] = ", ".join(tags) if tags else os.path.basename(p)
+# Label each run by its brainlife dataset tags (e.g. "egi2mne, Task1, Run2")
+# rather than its workdir path (an internal "../<task_id>/<dataset_id>/
+# raw.fif" path that means nothing to the user viewing product.json), and
+# pull out brainlife's own subject/session/run metadata (used below to seed
+# meegflow's report/output naming). _inputs is stripped out of config_data by
+# load_config() already, so re-read the raw config.json for it; falls back to
+# the path's basename if no tags are available (e.g. local dev runs).
+inputs_info = get_inputs_names(str(SCRIPT_DIR / "config.json"))
+labels = {}
+tags_by_path = {}
+meta_by_path = {}
+for i, p in enumerate(original_order):
+    info = inputs_info[i] if i < len(inputs_info) else {}
+    tags = info.get('tags', [])
+    tags_by_path[p] = tags
+    labels[p] = ", ".join(tags) if tags else os.path.basename(p)
+    meta_by_path[p] = info.get('meta') or {}
+
+if len(raw_paths) > 1 and run_order != 'as-is':
     given_str = "; ".join(f"{i + 1}. {labels[p]}" for i, p in enumerate(original_order))
 
     def _natural_key(s):
@@ -163,6 +168,56 @@ if len(raw_paths) > 1 and run_order != 'as-is':
             f"Input raw files were already in order by {sort_basis}: {used_str}",
         )
 
+# Extract brainlife's own subject/session/run identity (meta_by_path, keyed
+# by path so it's unaffected by any reordering above) so it can be fed into
+# meegflow's own report/output naming below, instead of leaving
+# data['subject']/['session'] at their meegflow default of None. A subject
+# mismatch across multiple raw inputs almost certainly means the wrong
+# datasets were selected -- concatenating two different subjects' data into
+# one recording would silently produce garbage, so this is a hard error, the
+# same as the run_order checks above. A session mismatch is far more
+# plausible as an intentional choice, so it's a warning only.
+subjects = [meta_by_path[p].get('subject') for p in raw_paths]
+sessions = [meta_by_path[p].get('session') for p in raw_paths]
+runs = [meta_by_path[p].get('run') for p in raw_paths]
+
+distinct_subjects = sorted({s for s in subjects if s})
+if len(distinct_subjects) > 1:
+    detail = (
+        "Input raw files have conflicting subject metadata: " +
+        ", ".join(f"{labels[p]}={meta_by_path[p].get('subject')}"
+                  for p in raw_paths if meta_by_path[p].get('subject')) +
+        ". Concatenating data from different subjects is almost certainly "
+        "a mistake -- check the selected inputs."
+    )
+    print(f"ERROR: {detail}")
+    add_info_to_product(product_items, detail, 'error')
+    create_product_json(product_items)
+    sys.exit(1)
+subject = distinct_subjects[0] if distinct_subjects else None
+
+distinct_sessions = sorted({s for s in sessions if s})
+if len(distinct_sessions) > 1:
+    detail = (
+        "Input raw files have conflicting session metadata: " +
+        ", ".join(f"{labels[p]}={meta_by_path[p].get('session')}"
+                  for p in raw_paths if meta_by_path[p].get('session')) +
+        ". Proceeding, but double-check this is intentional."
+    )
+    print(f"WARNING: {detail}")
+    add_info_to_product(product_items, detail, 'warning')
+session = distinct_sessions[0] if distinct_sessions else None
+
+run_values = [r for r in runs if r]
+run_label = ",".join(str(r) for r in run_values) if run_values else None
+
+if subject or session or run_label:
+    add_info_to_product(
+        product_items,
+        f"Recording identity -- subject: {subject or 'n/a'}, "
+        f"session: {session or 'n/a'}, run(s): {run_label or 'n/a'}"
+    )
+
 # Stage every raw file into its own subdirectory under a common root, each
 # named identically ("raw.fif"), regardless of how brainlife happened to lay
 # out the (possibly differently-nested) input paths. This is what lets a
@@ -228,11 +283,24 @@ except yaml.YAMLError as e:
     create_product_json(product_items)
     sys.exit(1)
 
-# custom_steps_folder is resolved by meegflow against the process's current
+# Always wire up this app's own custom_steps/ directory, regardless of
+# whether the pipeline YAML mentions custom_steps_folder -- this is what lets
+# the set_recording_metadata step below run unconditionally, and also means
+# any pipeline can reference this app's other custom steps (fir_filter,
+# epoch_with_correctness, ...) without repeating this YAML key every time.
+# (meegflow resolves custom_steps_folder against the process's current
 # working directory at pipeline-run time, not against this YAML's location --
-# make it absolute here so it loads reliably regardless of invocation context.
-if config.get('custom_steps_folder'):
-    config['custom_steps_folder'] = str(SCRIPT_DIR / config['custom_steps_folder'])
+# make it absolute so it loads reliably regardless of invocation context.)
+config['custom_steps_folder'] = str(SCRIPT_DIR / 'custom_steps')
+
+# Prepend a step recording subject/session/run identity into meegflow's own
+# data dict and report, before any user-configured step runs.
+config.setdefault('pipeline', []).insert(0, {
+    'name': 'set_recording_metadata',
+    'subject': subject,
+    'session': session,
+    'run': run_label,
+})
 
 # Create a glob reader matching every staged raw.fif under staging_root. The
 # wildcard (no {variable}) makes the reader group all of them into a single
